@@ -2,11 +2,11 @@
 
 namespace ORM
 {
-    public class Repository
+    public class RepositoryEFCore
     {
         private readonly ORMDbContext _context;
 
-        public Repository()
+        public RepositoryEFCore()
         {
             _context = new ORMDbContext();
         }
@@ -43,7 +43,6 @@ namespace ORM
             }
         }
 
-        // CRUD operations for Order
         public void AddOrder(Order order)
         {
             _context.Orders.Add(order);

@@ -61,28 +61,38 @@ namespace ORM
 
         public List<Order> GetOrdersByFilters(DateTime? startDate, DateTime? endDate, int? productId, string status)
         {
-            var query = _context.Orders.Include(o => o.Product).AsQueryable();
+            var startDateParam = startDate ?? DateTime.MinValue;
+            var endDateParam = endDate ?? DateTime.MaxValue;
 
-            if (startDate != null)
-                query = query.Where(o => o.CreatedDate >= startDate);
+            // Execute stored procedure to filter orders
+            var orders = _context.Orders.FromSqlRaw("EXECUTE GetOrdersByFilters @StartDate, @EndDate, @ProductId, @Status",
+                new[] {
+                    new Microsoft.Data.SqlClient.SqlParameter("@StartDate", startDateParam),
+                    new Microsoft.Data.SqlClient.SqlParameter("@EndDate", endDateParam),
+                    new Microsoft.Data.SqlClient.SqlParameter("@ProductId", productId ?? (object)DBNull.Value),
+                    new Microsoft.Data.SqlClient.SqlParameter("@Status", string.IsNullOrEmpty(status) ? DBNull.Value : (object)status)
+                }).ToList();
 
-            if (endDate != null)
-                query = query.Where(o => o.CreatedDate <= endDate);
-
-            if (productId != null)
-                query = query.Where(o => o.ProductId == productId);
-
-            if (!string.IsNullOrEmpty(status))
-                query = query.Where(o => o.Status == status);
-
-            return query.ToList();
+            return orders;
         }
 
         public void DeleteOrdersByFilters(DateTime? startDate, DateTime? endDate, int? productId, string status)
         {
-            var ordersToDelete = GetOrdersByFilters(startDate, endDate, productId, status);
-            _context.Orders.RemoveRange(ordersToDelete);
-            _context.SaveChanges();
+            using (var transaction = _context.Database.BeginTransaction())
+            {
+                try
+                {
+                    var ordersToDelete = GetOrdersByFilters(startDate, endDate, productId, status);
+                    _context.Orders.RemoveRange(ordersToDelete);
+                    _context.SaveChanges();
+                    transaction.Commit();
+                }
+                catch (Exception ex)
+                {
+                    transaction.Rollback();
+                    throw ex;
+                }
+            }
         }
     }
 }

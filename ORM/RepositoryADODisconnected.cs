@@ -151,35 +151,14 @@ namespace ORM
             using (var connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
-                var query = "SELECT * FROM Orders WHERE 1=1";
-                var parameters = new List<SqlParameter>();
+                var command = new SqlCommand("GetOrdersByFilters", connection);
+                command.CommandType = CommandType.StoredProcedure;
 
-                if (startDate != null)
-                {
-                    query += " AND CreatedDate >= @StartDate";
-                    parameters.Add(new SqlParameter("@StartDate", startDate));
-                }
-
-                if (endDate != null)
-                {
-                    query += " AND CreatedDate <= @EndDate";
-                    parameters.Add(new SqlParameter("@EndDate", endDate));
-                }
-
-                if (productId != null)
-                {
-                    query += " AND ProductId = @ProductId";
-                    parameters.Add(new SqlParameter("@ProductId", productId));
-                }
-
-                if (!string.IsNullOrEmpty(status))
-                {
-                    query += " AND Status = @Status";
-                    parameters.Add(new SqlParameter("@Status", status));
-                }
-
-                var command = new SqlCommand(query, connection);
-                command.Parameters.AddRange(parameters.ToArray());
+                // Add parameters to the stored procedure
+                command.Parameters.AddWithValue("@StartDate", startDate.HasValue ? (object)startDate : DBNull.Value);
+                command.Parameters.AddWithValue("@EndDate", endDate.HasValue ? (object)endDate : DBNull.Value);
+                command.Parameters.AddWithValue("@ProductId", productId.HasValue ? (object)productId : DBNull.Value);
+                command.Parameters.AddWithValue("@Status", string.IsNullOrEmpty(status) ? DBNull.Value : (object)status);
 
                 var reader = command.ExecuteReader();
                 while (reader.Read())
@@ -201,14 +180,25 @@ namespace ORM
         public void DeleteOrdersByFilters(DateTime? startDate, DateTime? endDate, int? productId, string status)
         {
             var ordersToDelete = GetOrdersByFilters(startDate, endDate, productId, status);
+
             using (var connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
-                foreach (var order in ordersToDelete)
+                var transaction = connection.BeginTransaction();
+                try
                 {
-                    var command = new SqlCommand("DELETE FROM Orders WHERE ID = @ID", connection);
-                    command.Parameters.AddWithValue("@ID", order.ID);
-                    command.ExecuteNonQuery();
+                    foreach (var order in ordersToDelete)
+                    {
+                        var command = new SqlCommand("DELETE FROM Orders WHERE ID = @ID", connection, transaction);
+                        command.Parameters.AddWithValue("@ID", order.ID);
+                        command.ExecuteNonQuery();
+                    }
+                    transaction.Commit();
+                }
+                catch (Exception ex)
+                {
+                    transaction.Rollback();
+                    throw new Exception("Error occurred during bulk delete.", ex);
                 }
             }
         }

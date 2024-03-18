@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Data;
 using Microsoft.Data.SqlClient;
 
 namespace ORM
@@ -199,35 +200,14 @@ namespace ORM
             using (var connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
-                var query = "SELECT * FROM Orders WHERE 1=1";
-                var parameters = new List<SqlParameter>();
+                var command = new SqlCommand("GetOrdersWithFiltration", connection);
+                command.CommandType = CommandType.StoredProcedure;
 
-                if (startDate != null)
-                {
-                    query += " AND CreatedDate >= @StartDate";
-                    parameters.Add(new SqlParameter("@StartDate", startDate));
-                }
-
-                if (endDate != null)
-                {
-                    query += " AND CreatedDate <= @EndDate";
-                    parameters.Add(new SqlParameter("@EndDate", endDate));
-                }
-
-                if (productId != null)
-                {
-                    query += " AND ProductId = @ProductId";
-                    parameters.Add(new SqlParameter("@ProductId", productId));
-                }
-
-                if (!string.IsNullOrEmpty(status))
-                {
-                    query += " AND Status = @Status";
-                    parameters.Add(new SqlParameter("@Status", status));
-                }
-
-                var command = new SqlCommand(query, connection);
-                command.Parameters.AddRange(parameters.ToArray());
+                // Add parameters to the stored procedure
+                command.Parameters.AddWithValue("@StartDate", startDate.HasValue ? (object)startDate : DBNull.Value);
+                command.Parameters.AddWithValue("@EndDate", endDate.HasValue ? (object)endDate : DBNull.Value);
+                command.Parameters.AddWithValue("@ProductId", productId.HasValue ? (object)productId : DBNull.Value);
+                command.Parameters.AddWithValue("@Status", string.IsNullOrEmpty(status) ? DBNull.Value : (object)status);
 
                 var reader = command.ExecuteReader();
                 while (reader.Read())
@@ -246,17 +226,35 @@ namespace ORM
             return orders;
         }
 
-        public void DeleteOrdersByFilters(DateTime? startDate, DateTime? endDate, int? productId, string status)
+
+       public void DeleteOrdersByFilters(DateTime? startDate, DateTime? endDate, int? productId, string status)
         {
-            var ordersToDelete = GetOrdersByFilters(startDate, endDate, productId, status);
             using (var connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
-                foreach (var order in ordersToDelete)
+                var transaction = connection.BeginTransaction();
+                try
                 {
-                    var command = new SqlCommand("DELETE FROM Orders WHERE ID = @ID", connection);
-                    command.Parameters.AddWithValue("@ID", order.ID);
+                    var command = new SqlCommand("sp_DeleteOrdersByFilters", connection, transaction);
+                    command.CommandType = CommandType.StoredProcedure;
+
+                    // Add parameters
+                    command.Parameters.AddWithValue("@StartDate", startDate ?? (object)DBNull.Value);
+                    command.Parameters.AddWithValue("@EndDate", endDate ?? (object)DBNull.Value);
+                    command.Parameters.AddWithValue("@ProductId", productId ?? (object)DBNull.Value);
+                    command.Parameters.AddWithValue("@Status", status);
+
+                    // Execute the stored procedure
                     command.ExecuteNonQuery();
+
+                    // Commit the transaction if successful
+                    transaction.Commit();
+                }
+                catch (Exception ex)
+                {
+                    // Rollback the transaction in case of any error
+                    transaction.Rollback();
+                    throw ex;
                 }
             }
         }

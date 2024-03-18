@@ -1,6 +1,7 @@
 ﻿using System;
 using Microsoft.Data.SqlClient;
 using Dapper;
+using System.Data;
 
 namespace ORM
 {
@@ -83,45 +84,39 @@ namespace ORM
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var query = "SELECT * FROM Orders WHERE 1=1";
-                var parameters = new DynamicParameters();
-
-                if (startDate != null)
+                var parameters = new
                 {
-                    query += " AND CreatedDate >= @StartDate";
-                    parameters.Add("@StartDate", startDate);
-                }
+                    StartDate = startDate,
+                    EndDate = endDate,
+                    ProductId = productId,
+                    Status = status
+                };
 
-                if (endDate != null)
-                {
-                    query += " AND CreatedDate <= @EndDate";
-                    parameters.Add("@EndDate", endDate);
-                }
-
-                if (productId != null)
-                {
-                    query += " AND ProductId = @ProductId";
-                    parameters.Add("@ProductId", productId);
-                }
-
-                if (!string.IsNullOrEmpty(status))
-                {
-                    query += " AND Status = @Status";
-                    parameters.Add("@Status", status);
-                }
-
-                return connection.Query<Order>(query, parameters).AsList();
+                var orders = connection.Query<Order>("GetOrdersByFilters", parameters, commandType: CommandType.StoredProcedure).AsList();
+                return orders;
             }
         }
 
         public void DeleteOrdersByFilters(DateTime? startDate, DateTime? endDate, int? productId, string status)
         {
             var ordersToDelete = GetOrdersByFilters(startDate, endDate, productId, status);
+
             using (var connection = new SqlConnection(_connectionString))
             {
-                foreach (var order in ordersToDelete)
+                connection.Open();
+                var transaction = connection.BeginTransaction();
+                try
                 {
-                    connection.Execute("DELETE FROM Orders WHERE ID = @ID", new { ID = order.ID });
+                    foreach (var order in ordersToDelete)
+                    {
+                        connection.Execute("DELETE FROM Orders WHERE ID = @ID", new { ID = order.ID }, transaction);
+                    }
+                    transaction.Commit();
+                }
+                catch (Exception ex)
+                {
+                    transaction.Rollback();
+                    throw new Exception("Error occurred during bulk delete.", ex);
                 }
             }
         }
